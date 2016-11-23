@@ -9,8 +9,11 @@ use Drupal\commerce_payment\Exception\HardDeclineException;
 use Drupal\commerce_payment\PaymentMethodTypeManager;
 use Drupal\commerce_payment\PaymentTypeManager;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OnsitePaymentGatewayBase;
+use Drupal\commerce_price\Price;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\State\State;
+use Drupal\Core\State\StateInterface;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -28,7 +31,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  *   },
  * )
  */
-class PaymentsPro extends OnsitePaymentGatewayBase {
+class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterface {
 
   /**
    * Paypal API URL.
@@ -43,11 +46,19 @@ class PaymentsPro extends OnsitePaymentGatewayBase {
   protected $httpClient;
 
   /**
+   * State service for retrieving database info.
+   *
+   * @var \Drupal\Core\State\StateInterface
+   */
+  protected $state;
+
+  /**
    * {@inheritdoc}
    */
-  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, PaymentTypeManager $payment_type_manager, PaymentMethodTypeManager $payment_method_type_manager, ClientInterface $client) {
+  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, PaymentTypeManager $payment_type_manager, PaymentMethodTypeManager $payment_method_type_manager, ClientInterface $client, StateInterface $state) {
     parent::__construct($configuration, $plugin_id, $plugin_definition, $entity_type_manager, $payment_type_manager, $payment_method_type_manager);
     $this->httpClient = $client;
+    $this->state = $state;
   }
 
   /**
@@ -61,7 +72,8 @@ class PaymentsPro extends OnsitePaymentGatewayBase {
       $container->get('entity_type.manager'),
       $container->get('plugin.manager.commerce_payment_type'),
       $container->get('plugin.manager.commerce_payment_method_type'),
-      $container->get('http_client')
+      $container->get('http_client'),
+      $container->get('state')
     );
   }
 
@@ -125,7 +137,67 @@ class PaymentsPro extends OnsitePaymentGatewayBase {
     if (REQUEST_TIME >= $payment_method->getExpiresTime()) {
       throw new HardDeclineException('The provided payment method has expired');
     }
-    throw new HardDeclineException('The provided payment method has expired');
+    $owner = $payment_method->getOwner();
+
+    // Prepare the payments parameters.
+    $parameters = [
+      'intent' => $capture ? 'sale' : 'authorize',
+      'payer' => [
+        'payment_method' => 'credit_card',
+        'funding_instruments' => [
+          [
+            'credit_card_token' => [
+              'credit_card_id' => $payment_method->getRemoteId(),
+            ],
+          ],
+        ],
+      ],
+      'transactions' => [
+        [
+          'amount' => [
+            'total' => $payment->getAmount()->getNumber(),
+            'currency' => $payment->getAmount()->getCurrencyCode(),
+          ],
+        ],
+      ],
+    ];
+
+    // Passing the external_customer_id seems to create issues.
+    if ($owner->isAuthenticated()) {
+      $parameters['payer']['funding_instruments'][0]['credit_card_token']['payer_id'] = $owner->id();
+    }
+
+    try {
+      $response = $this->httpClient->post(self::PAYPAL_API_URL . '/payments/payment', [
+        'headers' => [
+          'Content-type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->getAccessToken(),
+        ],
+        'json' => $parameters,
+      ]);
+      throw new HardDeclineException('Could not charge the payment method.');
+    }
+    catch (RequestException $e) {
+      throw new HardDeclineException('Could not charge the payment method.');
+    }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function capturePayment(PaymentInterface $payment, Price $amount = NULL) {
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function voidPayment(PaymentInterface $payment) {
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function refundPayment(PaymentInterface $payment, Price $amount = NULL) {
   }
 
   /**
@@ -155,8 +227,9 @@ class PaymentsPro extends OnsitePaymentGatewayBase {
       ];
 
       // Should we send the UUID instead?
+      // payer_id is marked as deprecated on some doc pages.
       if ($owner->isAuthenticated()) {
-        $parameters['external_customer_id'] = $owner->id();
+        $parameters['payer_id'] = $owner->id();
       }
 
       // TODO: Include the merchant_id parameter.
@@ -200,36 +273,47 @@ class PaymentsPro extends OnsitePaymentGatewayBase {
     $payment_method->delete();
   }
 
+  /**
+   * Gets an access token from PayPal.
+   *
+   * @return string
+   *   The access token returned by PayPal.
+   */
   protected function getAccessToken() {
-    $configuration = $this->getConfiguration();
-    if (!empty($configuration['access_token'])) {
-      return $configuration['access_token'];
-    }
-    else {
-      try {
-        $response = $this->httpClient->post(self::PAYPAL_API_URL . '/oauth2/token', [
-          'headers' => [
-            'Content-Type' => 'application/x-www-form-urlencoded',
-          ],
-          'auth' => [
-            $this->configuration['client_id'],
-            $this->configuration['client_secret'],
-          ],
-          'form_params' => [
-            'grant_type' => 'client_credentials',
-          ],
-        ]);
-        $data = json_decode($response->getBody(), TRUE);
+    $access_token = $this->state->get('commerce_paypal.access_token');
 
-        // Store the access token.
-        if ($response->getStatusCode() === 200 && isset($data['access_token'])) {
-          $configuration['access_token'] = $data['access_token'];
-          $this->setConfiguration($configuration);
-          return $configuration['access_token'];
-        }
+    if (!empty($access_token)) {
+      $token_expiration = $this->state->get('commerce_paypal.access_token_expiration');
+
+      // Check if the access token is still valid.
+      if (!empty($token_expiration) && $token_expiration > REQUEST_TIME) {
+        return $access_token;
       }
-      catch (RequestException $e) {
+    }
+
+    try {
+      $response = $this->httpClient->post(self::PAYPAL_API_URL . '/oauth2/token', [
+        'headers' => [
+          'Content-Type' => 'application/x-www-form-urlencoded',
+        ],
+        'auth' => [
+          $this->configuration['client_id'],
+          $this->configuration['client_secret'],
+        ],
+        'form_params' => [
+          'grant_type' => 'client_credentials',
+        ],
+      ]);
+      $data = json_decode($response->getBody(), TRUE);
+
+      // Store the access token.
+      if ($response->getStatusCode() === 200 && isset($data['access_token'])) {
+        $this->state->set('commerce_paypal.access_token', $data['access_token']);
+        $this->state->set('commerce_paypal.access_token_expiration', REQUEST_TIME + $data['expires_in']);
+        return $data['access_token'];
       }
+    }
+    catch (RequestException $e) {
     }
   }
 
