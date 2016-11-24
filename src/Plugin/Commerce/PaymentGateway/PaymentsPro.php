@@ -6,6 +6,7 @@ use Drupal\commerce_payment\CreditCard;
 use Drupal\commerce_payment\Entity\PaymentInterface;
 use Drupal\commerce_payment\Entity\PaymentMethodInterface;
 use Drupal\commerce_payment\Exception\HardDeclineException;
+use Drupal\commerce_payment\Exception\InvalidRequestException;
 use Drupal\commerce_payment\PaymentMethodTypeManager;
 use Drupal\commerce_payment\PaymentTypeManager;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OnsitePaymentGatewayBase;
@@ -178,6 +179,7 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
           'Authorization' => 'Bearer ' . $this->getAccessToken(),
         ],
         'json' => $parameters,
+        'timeout' => 0,
       ]);
       $data = json_decode($response->getBody(), TRUE);
 
@@ -213,61 +215,67 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
     if ($payment->getState()->value != 'authorization') {
       throw new \InvalidArgumentException('Only payments in the "authorization" state can be captured.');
     }
-    if ($payment->getAuthorizationExpiresTime() > REQUEST_TIME) {
-      throw new \InvalidArgumentException('Authorizations are guaranteed for up to three days.');
+    if ($payment->getAuthorizationExpiresTime() < REQUEST_TIME) {
+      throw new \InvalidArgumentException('Authorizations are guaranteed for up to 29 days.');
     }
-
-    // Retrieve the remote payment details, instead of doing this, we should
-    // store the initial response containing authorization ID.
-    $response = $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment->getRemoteId(), [
-      'headers' => [
-        'Content-type' => 'application/json',
-        'Authorization' => 'Bearer ' . $this->getAccessToken(),
-      ],
-    ]);
-
-    if ($response->getStatusCode() !== 200) {
-      throw new \InvalidArgumentException('Could not retrieve the remote payment details.');
-    }
-
-    // Retrieve the authorization ID.
-    $data = json_decode($response->getBody(), TRUE);
-    $relatedResources = $data['transactions'][0]['related_resources'];
-    $authorization = $relatedResources[0];
-
-    if (!isset($authorization['id'])) {
-      throw new \InvalidArgumentException('Could not retrieve the transaction ID.');
-    }
-
-    // If not specified, capture the entire amount.
-    $amount = $amount ?: $payment->getAmount();
-
-    // Instead of the remoteId, we need to pass the authorization ID, figure
-    // out how to store it...
-    $endpoint = $this->apiUrl() . '/payments/authorization/' . $authorization['id'] . '/capture';
-
-    $response = $this->httpClient->post($endpoint, [
-      'headers' => [
-        'Content-type' => 'application/json',
-        'Authorization' => 'Bearer ' . $this->getAccessToken(),
-      ],
-      'json' => [
-        'amount' => [
-          'currency' => $amount->getCurrencyCode(),
-          'total' => $amount->getNumber(),
+    try {
+      // Retrieve the remote payment details, instead of doing this, we should
+      // store the initial response containing authorization ID.
+      $response = $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment->getRemoteId(), [
+        'headers' => [
+          'Content-type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->getAccessToken(),
         ],
-      ],
-    ]);
-    $data = json_decode($response->getBody(), TRUE);
+      ]);
 
-    if ($data['state'] != 'completed') {
-      throw new \Exception($data['reason_code'], $data['reason_code']);
+      if ($response->getStatusCode() !== 200) {
+        throw new \InvalidArgumentException('Could not retrieve the remote payment details.');
+      }
+
+      // Retrieve the authorization ID.
+      $data = json_decode($response->getBody(), TRUE);
+      $relatedResources = $data['transactions'][0]['related_resources'];
+      $authorization = $relatedResources[0]['authorization'];
+
+      if (!isset($authorization['id'])) {
+        throw new \InvalidArgumentException('Could not retrieve the transaction ID.');
+      }
+
+      // If not specified, capture the entire amount.
+      $amount = $amount ?: $payment->getAmount();
+
+      // Instead of the remoteId, we need to pass the authorization ID, figure
+      // out how to store it...
+      $endpoint = $this->apiUrl() . '/payments/authorization/' . $authorization['id'] . '/capture';
+
+      $response = $this->httpClient->post($endpoint, [
+        'headers' => [
+          'Content-type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->getAccessToken(),
+        ],
+        'json' => [
+          'amount' => [
+            'currency' => $amount->getCurrencyCode(),
+            'total' => $amount->getNumber(),
+          ],
+        ],
+      ]);
+      $data = json_decode($response->getBody(), TRUE);
+
+      // TODO: Investigate which Exception is expected.
+      if ($data['state'] != 'completed') {
+        throw new \Exception($data['reason_code'], $data['reason_code']);
+      }
+
+      // TODO: Support partial refunds?
+      $payment->state = 'capture_completed';
+      $payment->setAmount($amount);
+      $payment->setCapturedTime(REQUEST_TIME);
+      $payment->save();
     }
-
-    $payment->state = 'capture_completed';
-    $payment->setAmount($amount);
-    $payment->setCapturedTime(REQUEST_TIME);
-    $payment->save();
+    catch (RequestException $e) {
+      throw new \Exception($e->getMessage());
+    }
   }
 
   /**
@@ -278,8 +286,85 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
 
   /**
    * {@inheritdoc}
+   *
+   * Not working yet, we need to send the transaction ID, not the payment
+   * remote ID.
    */
   public function refundPayment(PaymentInterface $payment, Price $amount = NULL) {
+    if (!in_array($payment->getState()->value, ['capture_completed', 'capture_partially_refunded'])) {
+      throw new \InvalidArgumentException('Only payments in the "capture_completed" and "capture_partially_refunded" states can be refunded.');
+    }
+    // TODO: check if more than 180 days.
+
+    // If not specified, refund the entire amount.
+    $amount = $amount ?: $payment->getAmount();
+    // Validate the requested amount.
+    $balance = $payment->getBalance();
+
+    if ($amount->greaterThan($balance)) {
+      throw new InvalidRequestException(sprintf("Can't refund more than %s.", $balance->__toString()));
+    }
+
+    try {
+      $response = $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment->getRemoteId(), [
+        'headers' => [
+          'Content-type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->getAccessToken(),
+        ],
+      ]);
+      $data = json_decode($response->getBody(), TRUE);
+
+      // We need to retrieve the payment transaction ID.
+      if (!isset($data['id'])) {
+        throw new InvalidRequestException('Could not retrieve the remote payment details.');
+      }
+
+      // If it was a sale payment transaction.
+      if ($data['intent'] == 'sale') {
+        $transaction = $data['transactions'][0]['related_resources'][0]['sale'];
+        $endpoint = '/payments/sale/' . $transaction['id'] . '/refund';
+      }
+      else {
+        foreach ($data['transactions'][0]['related_resources'] as $key => $related_resource) {
+          if (key($related_resource) == 'capture') {
+            $endpoint = '/payments/capture/' . $related_resource['capture']['id'] . '/refund/';
+            break;
+          }
+        }
+      }
+
+      $old_refunded_amount = $payment->getRefundedAmount();
+      $new_refunded_amount = $old_refunded_amount->add($amount);
+
+      $response = $this->httpClient->post($this->apiUrl() . $endpoint, [
+        'headers' => [
+          'Content-type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->getAccessToken(),
+        ],
+        'json' => [
+          'amount' => [
+            'total' => $amount->getNumber(),
+            'currency' => $amount->getCurrencyCode(),
+          ],
+        ],
+      ]);
+      $data = json_decode($response->getBody(), TRUE);
+
+      if (isset($data['state']) && $data['state'] == 'completed') {
+        if ($new_refunded_amount->lessThan($payment->getAmount())) {
+          $payment->state = 'capture_partially_refunded';
+        }
+        else {
+          $payment->state = 'capture_refunded';
+        }
+
+        $payment->setRefundedAmount($new_refunded_amount);
+        $payment->save();
+      }
+    }
+    catch (RequestException $e) {
+      throw new InvalidRequestException("Could not refund the payment.");
+    }
   }
 
   /**
