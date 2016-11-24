@@ -12,7 +12,6 @@ use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OnsitePaymentGatewayB
 use Drupal\commerce_price\Price;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormStateInterface;
-use Drupal\Core\State\State;
 use Drupal\Core\State\StateInterface;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
@@ -34,9 +33,14 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterface {
 
   /**
-   * Paypal API URL.
+   * Paypal test API URL.
    */
-  const PAYPAL_API_URL = 'https://api.sandbox.paypal.com/v1';
+  const PAYPAL_API_TEST_URL = 'https://api.sandbox.paypal.com/v1';
+
+  /**
+   * Paypal production API URL.
+   */
+  const PAYPAL_API_URL = 'https://api.paypal.com/v1';
 
   /**
    * The HTTP client.
@@ -168,14 +172,34 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
     }
 
     try {
-      $response = $this->httpClient->post(self::PAYPAL_API_URL . '/payments/payment', [
+      $response = $this->httpClient->post($this->apiUrl() . '/payments/payment', [
         'headers' => [
           'Content-type' => 'application/json',
           'Authorization' => 'Bearer ' . $this->getAccessToken(),
         ],
         'json' => $parameters,
       ]);
-      throw new HardDeclineException('Could not charge the payment method.');
+      $data = json_decode($response->getBody(), TRUE);
+
+      // TODO: not sure if we need to throw a HardDeclineException here.
+      if ($data['state'] == 'failed') {
+        throw new HardDeclineException('Could not charge the payment method.');
+      }
+
+      $payment->state = $capture ? 'capture_completed' : 'authorization';
+      if ($this->getMode() == 'test') {
+        $payment->setTest(TRUE);
+      }
+      $payment->setRemoteId($data['id']);
+      $payment->setRemoteState($data['state']);
+      $payment->setAuthorizedTime(REQUEST_TIME);
+      if ($capture) {
+        $payment->setCapturedTime(REQUEST_TIME);
+      }
+      else {
+        $payment->setAuthorizationExpiresTime(REQUEST_TIME + (86400 * 29));
+      }
+      $payment->save();
     }
     catch (RequestException $e) {
       throw new HardDeclineException('Could not charge the payment method.');
@@ -186,6 +210,64 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
    * {@inheritdoc}
    */
   public function capturePayment(PaymentInterface $payment, Price $amount = NULL) {
+    if ($payment->getState()->value != 'authorization') {
+      throw new \InvalidArgumentException('Only payments in the "authorization" state can be captured.');
+    }
+    if ($payment->getAuthorizationExpiresTime() > REQUEST_TIME) {
+      throw new \InvalidArgumentException('Authorizations are guaranteed for up to three days.');
+    }
+
+    // Retrieve the remote payment details, instead of doing this, we should
+    // store the initial response containing authorization ID.
+    $response = $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment->getRemoteId(), [
+      'headers' => [
+        'Content-type' => 'application/json',
+        'Authorization' => 'Bearer ' . $this->getAccessToken(),
+      ],
+    ]);
+
+    if ($response->getStatusCode() !== 200) {
+      throw new \InvalidArgumentException('Could not retrieve the remote payment details.');
+    }
+
+    // Retrieve the authorization ID.
+    $data = json_decode($response->getBody(), TRUE);
+    $relatedResources = $data['transactions'][0]['related_resources'];
+    $authorization = $relatedResources[0];
+
+    if (!isset($authorization['id'])) {
+      throw new \InvalidArgumentException('Could not retrieve the transaction ID.');
+    }
+
+    // If not specified, capture the entire amount.
+    $amount = $amount ?: $payment->getAmount();
+
+    // Instead of the remoteId, we need to pass the authorization ID, figure
+    // out how to store it...
+    $endpoint = $this->apiUrl() . '/payments/authorization/' . $authorization['id'] . '/capture';
+
+    $response = $this->httpClient->post($endpoint, [
+      'headers' => [
+        'Content-type' => 'application/json',
+        'Authorization' => 'Bearer ' . $this->getAccessToken(),
+      ],
+      'json' => [
+        'amount' => [
+          'currency' => $amount->getCurrencyCode(),
+          'total' => $amount->getNumber(),
+        ],
+      ],
+    ]);
+    $data = json_decode($response->getBody(), TRUE);
+
+    if ($data['state'] != 'completed') {
+      throw new \Exception($data['reason_code'], $data['reason_code']);
+    }
+
+    $payment->state = 'capture_completed';
+    $payment->setAmount($amount);
+    $payment->setCapturedTime(REQUEST_TIME);
+    $payment->save();
   }
 
   /**
@@ -233,7 +315,7 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
       }
 
       // TODO: Include the merchant_id parameter.
-      $response = $this->httpClient->post(self::PAYPAL_API_URL . '/vault/credit-cards', [
+      $response = $this->httpClient->post($this->apiUrl() . '/vault/credit-cards', [
         'headers' => [
           'Content-type' => 'application/json',
           'Authorization' => 'Bearer ' . $this->getAccessToken(),
@@ -292,7 +374,7 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
     }
 
     try {
-      $response = $this->httpClient->post(self::PAYPAL_API_URL . '/oauth2/token', [
+      $response = $this->httpClient->post($this->apiUrl() . '/oauth2/token', [
         'headers' => [
           'Content-Type' => 'application/x-www-form-urlencoded',
         ],
@@ -315,6 +397,13 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
     }
     catch (RequestException $e) {
     }
+  }
+
+  /**
+   * Returns the Api URL.
+   */
+  protected function apiUrl() {
+    return $this->getMode() == 'test' ? self::PAYPAL_API_TEST_URL : self::PAYPAL_API_URL;
   }
 
 }
