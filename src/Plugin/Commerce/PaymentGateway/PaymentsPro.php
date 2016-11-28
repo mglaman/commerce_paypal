@@ -221,12 +221,7 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
     try {
       // Retrieve the remote payment details, instead of doing this, we should
       // store the initial response containing authorization ID.
-      $response = $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment->getRemoteId(), [
-        'headers' => [
-          'Content-type' => 'application/json',
-          'Authorization' => 'Bearer ' . $this->getAccessToken(),
-        ],
-      ]);
+      $response = $this->getPaymentDetails($payment->getRemoteId());
 
       if ($response->getStatusCode() !== 200) {
         throw new \InvalidArgumentException('Could not retrieve the remote payment details.');
@@ -282,13 +277,63 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
    * {@inheritdoc}
    */
   public function voidPayment(PaymentInterface $payment) {
+    if ($payment->getState()->value != 'authorization') {
+      throw new \InvalidArgumentException('Only payments in the "authorization" state can be voided.');
+    }
+
+    // Get payment details first.
+    $response = $this->getPaymentDetails($payment->getRemoteId());
+
+    if ($response->getStatusCode() === 200) {
+      $data = json_decode($response->getBody(), TRUE);
+
+      if (!isset($data['intent']) || $data['intent'] != 'authorize') {
+        throw new \InvalidArgumentException('Only payments in the "authorization" state can be voided.');
+      }
+
+      $transaction = $data['transactions'][0];
+      $authorization = FALSE;
+
+      foreach ($transaction['related_resources'] as $related_resource) {
+        if (key($related_resource) == 'authorization') {
+          $authorization = $related_resource['authorization'];
+          break;
+        }
+      }
+
+      // If we were able to find the authorization in the related resource array.
+      if (isset($authorization['id'])) {
+        try {
+           $response = $this->httpClient->post($this->apiUrl() . '/payments/authorization/' . $authorization['id'] . '/void', [
+            'headers' => [
+              'Content-type' => 'application/json',
+              'Authorization' => 'Bearer ' . $this->getAccessToken(),
+            ],
+          ]);
+
+          if ($response->getStatusCode() === 200) {
+            $data = json_decode($response->getBody(), TRUE);
+
+            // Check the returned state to ensure the authorization has been
+            // voided.
+            if ($data['state'] == 'voided') {
+              $payment->state = 'authorization_voided';
+              $payment->save();
+            }
+          }
+        }
+        catch (RequestException $e) {
+          throw new \InvalidArgumentException('Only payments in the "authorization" state can be voided.');
+        }
+      }
+    }
+
   }
 
   /**
    * {@inheritdoc}
    *
-   * Not working yet, we need to send the transaction ID, not the payment
-   * remote ID.
+   * TODO: Find a way to store the capture ID.
    */
   public function refundPayment(PaymentInterface $payment, Price $amount = NULL) {
     if (!in_array($payment->getState()->value, ['capture_completed', 'capture_partially_refunded'])) {
@@ -306,12 +351,7 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
     }
 
     try {
-      $response = $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment->getRemoteId(), [
-        'headers' => [
-          'Content-type' => 'application/json',
-          'Authorization' => 'Bearer ' . $this->getAccessToken(),
-        ],
-      ]);
+      $response = $this->getPaymentDetails($payment->getRemoteId());
       $data = json_decode($response->getBody(), TRUE);
 
       // We need to retrieve the payment transaction ID.
@@ -489,6 +529,29 @@ class PaymentsPro extends OnsitePaymentGatewayBase implements PaymentsProInterfa
    */
   protected function apiUrl() {
     return $this->getMode() == 'test' ? self::PAYPAL_API_TEST_URL : self::PAYPAL_API_URL;
+  }
+
+  /**
+   * Shows details for a payment, by ID, that is yet completed.
+   * For example, a payment that was created, approved, or failed.
+   *
+   * @param $payment_id
+   *   The identifier
+   * @return \Psr\Http\Message\ResponseInterface|bool
+   *   The HTTP response, or FALSE in case of failure.
+   */
+  protected function getPaymentDetails($payment_id) {
+    try {
+      return $this->httpClient->get($this->apiUrl() . '/payments/payment/' . $payment_id, [
+        'headers' => [
+          'Content-type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->getAccessToken(),
+        ],
+      ]);
+    }
+    catch (RequestException $e) {
+      return FALSE;
+    }
   }
 
 }
