@@ -14,6 +14,9 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
   public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
     /** @var \Drupal\commerce_payment\Entity\PaymentInterface $payment */
     $payment = $this->entity;
+    /** @var \Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway\PaymentsStandard $payment_gateway_plugin */
+    $payment_gateway_plugin = $payment->getPaymentGateway()->getPlugin();
+    $order = $payment->getOrder();
 
     $data = [
       // Specify the checkout experience to present to the user.
@@ -37,9 +40,9 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
 
       // @todo Payment needs to define specific cancel/return so we can embed anywhere.
       // Return to the review page when payment is canceled.
-      'cancel_return' => '',
+      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)->toString(),
       // Return to the payment redirect page for processing successful payments.
-      'return' => '',
+      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)->toString(),
 
       // Return to this site with payment data in the POST.
       'rm' => 2,
@@ -50,6 +53,12 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
       'currency_code' => $payment->getAmount()->getCurrencyCode(),
       // @todo port old commerce_paypal_wps_languages().
       'lc' => 'US',
+      'invoice' => $order->id() . '-' . REQUEST_TIME,
+      // Define a single item in the cart representing the whole order.
+      'item_name_1' => t('Order @order_number at @store', ['@order_number' => $order->getOrderNumber(), '@store' => $order->getStore()->label()]),
+      'amount_1' => \Drupal::getContainer()->get('commerce_price.rounder')->round($order->getTotalPrice())->getNumber(),
+      'on0_1' => t('Product count'),
+      'os0_1' => $order->get('order_items')->count(),
     ];
 
     foreach ($data as $name => $value) {
@@ -57,18 +66,8 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
         $form[$name] = ['#type' => 'hidden', '#value' => $value];
       }
     }
-    // @todo this is andbox
-    $form['offiste_action'] = [
-      '#type' => 'hidden',
-      '#value' => 'https://www.sandbox.paypal.com/cgi-bin/webscr',
-    ];
-    // @todo live == https://www.paypal.com/cgi-bin/webscr
-    $form['submit'] = [
-      '#type' => 'submit',
-      '#value' => t('Proceed to PayPal'),
-    ];
 
-    return $form;
+    return parent::buildConfigurationForm($form, $form_state);
   }
 
 }

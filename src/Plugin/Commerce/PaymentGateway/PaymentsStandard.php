@@ -2,6 +2,7 @@
 
 namespace Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway;
 
+use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
 
 /**
@@ -17,27 +18,28 @@ use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGateway
  *   payment_method_types = {"paypal"},
  * )
  */
-class PaymentsStandard extends OffsitePaymentGatewayBase {
+class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStandardInterface {
 
   /**
    * {@inheritdoc}
    */
-  public function doAutomaticRedirect() {
-    return TRUE;
+  public function getRedirectUrl() {
+    return 'https://www.sandbox.paypal.com/cgi-bin/webscr';
   }
 
   /**
    * {@inheritdoc}
    */
-  public function onRedirectSuccess() {
-    // TODO: Implement onRedirectSuccess() method.
+  public function onRedirectReturn(OrderInterface $order) {
+    // Create and save payment method.
+    $stop = null;
   }
 
   /**
    * {@inheritdoc}
    */
-  public function onRedirectCancel() {
-    // TODO: Implement onRedirectCancel() method.
+  public function onRedirectCancel(OrderInterface $order) {
+    // Nothing to do.
   }
 
 }
