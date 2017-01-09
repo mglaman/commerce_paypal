@@ -2,11 +2,11 @@
 
 namespace Drupal\commerce_paypal\PluginForm;
 
-use Drupal\commerce_payment\PluginForm\OffsitePaymentForm;
+use Drupal\commerce_payment\PluginForm\PaymentOffsiteForm;
 use Drupal\Core\Form\FormStateInterface;
 
 
-class PaymentsStandardPaymentForm extends OffsitePaymentForm {
+class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
 
   /**
    * {@inheritdoc}
