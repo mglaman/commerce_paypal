@@ -29,8 +29,7 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
       // @todo make configurable
       'business' => 'nmd.matt@gmail.com',
       // The path PayPal should send the IPN to.
-      // @todo define this
-      'notify_url' => '',
+      'notify_url' => $payment_gateway_plugin->getNotifyUrl()->toString(),
       // The application generating the API request.
       'bn' => 'CommerceGuys_Cart_PPS',
       // Set the correct character set.
@@ -39,14 +38,12 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
       'no_note' => 1,
       // Do not display a shipping address prompt at PayPal.
       'no_shipping' => 1,
-
       // Return to the review page when payment is canceled.
       'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)
         ->toString(),
       // Return to the payment redirect page for processing successful payments.
       'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)
         ->toString(),
-
       // Return to this site with payment data in the POST.
       'rm' => 2,
       // The type of payment action PayPal should take with this order.
@@ -78,7 +75,7 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
 
     $mode = $payment_gateway_plugin->getMode();
     if ($mode == 'live') {
-
+      $redirect_url = 'https://www.paypal.com/cgi-bin/webscr';
     }
     else {
       $redirect_url = 'https://www.sandbox.paypal.com/cgi-bin/webscr';

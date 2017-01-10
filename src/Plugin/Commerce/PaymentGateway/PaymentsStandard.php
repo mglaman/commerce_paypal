@@ -2,6 +2,7 @@
 
 namespace Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway;
 
+use Drupal\commerce_order\Entity\Order;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
 use Drupal\Core\Url;
@@ -41,38 +42,52 @@ class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStan
   }
 
   public function onNotify(Request $request) {
-    // mc_gross = 89.50
-    // invoice = 3-TIMESTAMP
-    // protection_eligibility
-    // item_number1
-    // payer_id
-    // tax
-    // payment_date
-    // payment_status (Pending)
-    // notify_version
-    // payer_status
-    // payer_email
-    // verify_sign
-    // tnx_id
-    // pending_reason
-    // payment_gross
-    // auth
 
-    // Create the payment.
-    $payment_storage = \Drupal::entityTypeManager()
-      ->getStorage('commerce_payment');
-    $payment = $payment_storage->create([
-      'state' => 'authorization',
-      //'amount' => $order->getTotalPrice(),
-      // Gateway plugins cannot reach their matching config entity directly.
-      //'payment_gateway' => $order->payment_gateway->entity->id(),
-      //'order_id' => $order->id(),
-      'test' => $this->getMode() == 'test',
-      'remote_id' => $request->request->get('txn_id'),
-      'remote_state' => $request->request->get('payment_status'),
-      'authorized' => REQUEST_TIME,
-    ]);
-    $payment->save();
+    $ipn = new PaypalIPN();
+    if ($this->getMode() != 'live') {
+      $ipn->useSandbox();
+    }
+    $verified = $ipn->verifyIPN();
+    if (!$verified) {
+      \Drupal::logger('commerce_paypal')->notice('Faulty IPN received.');
+      return;
+    }
+
+    $txn_id = $request->request->get('txn_id');
+    $invoice = $request->request->get('invoice');
+    if ($invoice) {
+      $invoice_parts = explode('-', invoice);
+      $order_id = array_shift($invoice_parts);
+    } else {
+      $order_id = 'Unknown';
+    }
+
+    $payment_status = $request->request->get('payment_status');
+    if ($payment_status == 'Completed') {
+
+      // @todo check that txn_id has not been previously processed
+      // @todo check that receiver_email is your Primary PayPal email
+      // @todo check that payment_amount/payment_currency are correct
+
+      $order = Order::load($order_id);
+      $payment_storage = \Drupal::entityTypeManager()
+        ->getStorage('commerce_payment');
+      $payment = $payment_storage->create([
+        'state' => 'authorization',
+        'amount' => $order->getTotalPrice(),
+        'payment_gateway' => $this->id(),
+        'order_id' => $order->id(),
+        'test' => ($this->getMode() != 'live'),
+        'remote_id' => $request->request->get('txn_id'),
+        'remote_state' => $request->request->get('payment_status'),
+        'authorized' => REQUEST_TIME,
+      ]);
+      $payment->save();
+    }
+
+    \Drupal::logger('commerce_paypal')->notice('IPN processed for Order @order_id with ID @txn_id.', array(
+      '@txn_id' => $txn_id,
+      '@order_id' => $order_id
+    ));
   }
-
 }
