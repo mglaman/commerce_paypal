@@ -5,6 +5,7 @@ namespace Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway;
 use Drupal\commerce_order\Entity\Order;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Url;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -22,6 +23,33 @@ use Symfony\Component\HttpFoundation\Request;
  * )
  */
 class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStandardInterface {
+
+  public function defaultConfiguration() {
+    return [
+      'business' => '',
+    ] + parent::defaultConfiguration();
+  }
+
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['business'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Business'),
+      '#default_value' => $this->configuration['business'],
+      '#required' => TRUE,
+    ];
+
+    return $form;
+  }
+
+  public function submitConfigurationForm(array &$form, FormStateInterface $form_state) {
+    parent::submitConfigurationForm($form, $form_state);
+    if (!$form_state->getErrors()) {
+      $values = $form_state->getValue($form['#parents']);
+      $this->configuration['business'] = $values['business'];
+    }
+  }
 
   public function getPaymentRedirectCancelUrl(OrderInterface $order) {
     $route_parameters = array(

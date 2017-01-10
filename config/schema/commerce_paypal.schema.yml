@@ -1,12 +1,6 @@
 commerce_payment.commerce_payment_gateway.plugin.paypal_payments_standard:
   type: commerce_payment_gateway_configuration
   mapping:
-    client_id:
-      type: string
-      label: 'Client ID'
-    client_secret:
-      type: string
-      label: 'Client secret'
     business:
       type: string
       label: 'Business'
