@@ -6,7 +6,7 @@ use Drupal\commerce_payment\PluginForm\PaymentOffsiteForm;
 use Drupal\Core\Form\FormStateInterface;
 
 
-class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
+class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
 
   /**
    * {@inheritdoc}
@@ -40,11 +40,12 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
       // Do not display a shipping address prompt at PayPal.
       'no_shipping' => 1,
 
-//      // @todo Payment needs to define specific cancel/return so we can embed anywhere.
-//      // Return to the review page when payment is canceled.
-//      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)->toString(),
-//      // Return to the payment redirect page for processing successful payments.
-//      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)->toString(),
+      // Return to the review page when payment is canceled.
+      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)
+        ->toString(),
+      // Return to the payment redirect page for processing successful payments.
+      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)
+        ->toString(),
 
       // Return to this site with payment data in the POST.
       'rm' => 2,
@@ -57,8 +58,14 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
       'lc' => 'US',
       'invoice' => $order->id() . '-' . REQUEST_TIME,
       // Define a single item in the cart representing the whole order.
-      'item_name_1' => t('Order @order_number at @store', ['@order_number' => $order->getOrderNumber(), '@store' => $order->getStore()->label()]),
-      'amount_1' => \Drupal::getContainer()->get('commerce_price.rounder')->round($order->getTotalPrice())->getNumber(),
+      'item_name_1' => t('Order @order_number at @store', [
+        '@order_number' => $order->getOrderNumber(),
+        '@store' => $order->getStore()->label()
+      ]),
+      'amount_1' => \Drupal::getContainer()
+        ->get('commerce_price.rounder')
+        ->round($order->getTotalPrice())
+        ->getNumber(),
       'on0_1' => t('Product count'),
       'os0_1' => $order->get('order_items')->count(),
     ];
@@ -69,7 +76,13 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
       }
     }
 
-    $redirect_url = 'https://www.sandbox.paypal.com/cgi-bin/webscr';
+    $mode = $payment_gateway_plugin->getMode();
+    if ($mode == 'live') {
+
+    }
+    else {
+      $redirect_url = 'https://www.sandbox.paypal.com/cgi-bin/webscr';
+    }
 
     return $this->buildRedirectForm($form, $form_state, $redirect_url, $data, 'post');
   }

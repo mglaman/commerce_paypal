@@ -2,7 +2,9 @@
 
 namespace Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway;
 
+use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
+use Drupal\Core\Url;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -19,6 +21,24 @@ use Symfony\Component\HttpFoundation\Request;
  * )
  */
 class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStandardInterface {
+
+  public function getPaymentRedirectCancelUrl(OrderInterface $order) {
+    $route_parameters = array(
+      'commerce_order' => $order->id(),
+      'step' => 'review',
+    );
+    $options = array('absolute' => TRUE);
+    return Url::fromRoute('commerce_checkout.form', $route_parameters, $options);
+  }
+
+  public function getPaymentRedirectReturnUrl(OrderInterface $order) {
+    $route_parameters = array(
+      'commerce_order' => $order->id(),
+      'step' => 'complete',
+    );
+    $options = array('absolute' => TRUE);
+    return Url::fromRoute('commerce_checkout.form', $route_parameters, $options);
+  }
 
   public function onNotify(Request $request) {
     // mc_gross = 89.50
@@ -39,7 +59,8 @@ class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStan
     // auth
 
     // Create the payment.
-    $payment_storage = \Drupal::entityTypeManager()->getStorage('commerce_payment');
+    $payment_storage = \Drupal::entityTypeManager()
+      ->getStorage('commerce_payment');
     $payment = $payment_storage->create([
       'state' => 'authorization',
       //'amount' => $order->getTotalPrice(),
