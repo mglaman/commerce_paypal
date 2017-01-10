@@ -12,6 +12,8 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
    * {@inheritdoc}
    */
   public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
     /** @var \Drupal\commerce_payment\Entity\PaymentInterface $payment */
     $payment = $this->entity;
     /** @var \Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway\PaymentsStandard $payment_gateway_plugin */
@@ -38,11 +40,11 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
       // Do not display a shipping address prompt at PayPal.
       'no_shipping' => 1,
 
-      // @todo Payment needs to define specific cancel/return so we can embed anywhere.
-      // Return to the review page when payment is canceled.
-      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)->toString(),
-      // Return to the payment redirect page for processing successful payments.
-      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)->toString(),
+//      // @todo Payment needs to define specific cancel/return so we can embed anywhere.
+//      // Return to the review page when payment is canceled.
+//      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)->toString(),
+//      // Return to the payment redirect page for processing successful payments.
+//      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)->toString(),
 
       // Return to this site with payment data in the POST.
       'rm' => 2,
@@ -67,7 +69,9 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm  {
       }
     }
 
-    return parent::buildConfigurationForm($form, $form_state);
+    $redirect_url = 'https://www.sandbox.paypal.com/cgi-bin/webscr';
+
+    return $this->buildRedirectForm($form, $form_state, $redirect_url, $data, 'post');
   }
 
 }

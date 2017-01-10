@@ -2,15 +2,15 @@
 
 namespace Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway;
 
-use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
- * Provides the Onsite payment gateway.
+ * Provides the PaymentStandard payment gateway.
  *
  * @CommercePaymentGateway(
  *   id = "paypal_payments_standard",
- *   label = "PayPal Standard",
+ *   label = "PayPal (Payments Standard)",
  *   display_label = "PayPal",
  *    forms = {
  *     "offsite-payment" = "Drupal\commerce_paypal\PluginForm\PaymentsStandardPaymentForm",
@@ -20,19 +20,7 @@ use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGateway
  */
 class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStandardInterface {
 
-  /**
-   * {@inheritdoc}
-   */
-  public function getRedirectUrl() {
-    return 'https://www.sandbox.paypal.com/cgi-bin/webscr';
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function onRedirectReturn(OrderInterface $order) {
-    $current_request = \Drupal::getContainer()->get('request_stack')->getCurrentRequest();
-
+  public function onNotify(Request $request) {
     // mc_gross = 89.50
     // invoice = 3-TIMESTAMP
     // protection_eligibility
@@ -54,23 +42,16 @@ class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStan
     $payment_storage = \Drupal::entityTypeManager()->getStorage('commerce_payment');
     $payment = $payment_storage->create([
       'state' => 'authorization',
-      'amount' => $order->getTotalPrice(),
+      //'amount' => $order->getTotalPrice(),
       // Gateway plugins cannot reach their matching config entity directly.
-      'payment_gateway' => $order->payment_gateway->entity->id(),
-      'order_id' => $order->id(),
+      //'payment_gateway' => $order->payment_gateway->entity->id(),
+      //'order_id' => $order->id(),
       'test' => $this->getMode() == 'test',
-      'remote_id' => $current_request->request->get('txn_id'),
-      'remote_state' => $current_request->request->get('payment_status'),
+      'remote_id' => $request->request->get('txn_id'),
+      'remote_state' => $request->request->get('payment_status'),
       'authorized' => REQUEST_TIME,
     ]);
     $payment->save();
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function onRedirectCancel(OrderInterface $order) {
-    // Nothing to do.
   }
 
 }
