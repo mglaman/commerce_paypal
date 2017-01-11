@@ -104,7 +104,7 @@ class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStan
       $payment = $payment_storage->create([
         'state' => 'capture_completed',
         'amount' => $order->getTotalPrice(),
-        'payment_gateway' => 'paypal_payments_standard',
+        'payment_gateway' => $this->entityId,
         'order_id' => $order->id(),
         'test' => ($this->getMode() != 'live'),
         'remote_id' => $request->request->get('txn_id'),
