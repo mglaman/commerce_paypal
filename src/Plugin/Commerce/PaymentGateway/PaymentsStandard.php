@@ -5,6 +5,7 @@ namespace Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway;
 use Drupal\commerce_order\Entity\Order;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OffsitePaymentGatewayBase;
+use Drupal\commerce_paypal\PaypalIPN;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Url;
 use Symfony\Component\HttpFoundation\Request;
@@ -84,7 +85,7 @@ class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStan
     $txn_id = $request->request->get('txn_id');
     $invoice = $request->request->get('invoice');
     if ($invoice) {
-      $invoice_parts = explode('-', invoice);
+      $invoice_parts = explode('-', $invoice);
       $order_id = array_shift($invoice_parts);
     } else {
       $order_id = 'Unknown';
@@ -101,9 +102,9 @@ class PaymentsStandard extends OffsitePaymentGatewayBase implements PaymentsStan
       $payment_storage = \Drupal::entityTypeManager()
         ->getStorage('commerce_payment');
       $payment = $payment_storage->create([
-        'state' => 'authorization',
+        'state' => 'capture_completed',
         'amount' => $order->getTotalPrice(),
-        'payment_gateway' => $this->id(),
+        'payment_gateway' => 'paypal_payments_standard',
         'order_id' => $order->id(),
         'test' => ($this->getMode() != 'live'),
         'remote_id' => $request->request->get('txn_id'),
