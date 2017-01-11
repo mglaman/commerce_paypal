@@ -2,16 +2,14 @@
 
 namespace Drupal\commerce_paypal\PluginForm;
 
-use Drupal\commerce_payment\PluginForm\OffsitePaymentForm;
+use Drupal\commerce_payment\PluginForm\PaymentOffsiteForm;
 use Drupal\Core\Form\FormStateInterface;
 
+class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
 
-class PaymentsStandardPaymentForm extends OffsitePaymentForm {
-
-  /**
-   * {@inheritdoc}
-   */
   public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
     /** @var \Drupal\commerce_payment\Entity\PaymentInterface $payment */
     $payment = $this->entity;
     /** @var \Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway\PaymentsStandard $payment_gateway_plugin */
@@ -24,11 +22,9 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
       // Signify we're passing in a shopping cart from our system.
       'upload' => 1,
       // The store's PayPal e-mail address.
-      // @todo make configurable
-      'business' => 'nmd.matt@gmail.com',
+      'business' => $payment_gateway_plugin->getConfiguration()['business'],
       // The path PayPal should send the IPN to.
-      // @todo define this
-      'notify_url' => '',
+      'notify_url' => $payment_gateway_plugin->getNotifyUrl()->toString(),
       // The application generating the API request.
       'bn' => 'CommerceGuys_Cart_PPS',
       // Set the correct character set.
@@ -37,13 +33,12 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
       'no_note' => 1,
       // Do not display a shipping address prompt at PayPal.
       'no_shipping' => 1,
-
-      // @todo Payment needs to define specific cancel/return so we can embed anywhere.
       // Return to the review page when payment is canceled.
-      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)->toString(),
+      'cancel_return' => $payment_gateway_plugin->getPaymentRedirectCancelUrl($order)
+        ->toString(),
       // Return to the payment redirect page for processing successful payments.
-      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)->toString(),
-
+      'return' => $payment_gateway_plugin->getPaymentRedirectReturnUrl($order)
+        ->toString(),
       // Return to this site with payment data in the POST.
       'rm' => 2,
       // The type of payment action PayPal should take with this order.
@@ -55,8 +50,14 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
       'lc' => 'US',
       'invoice' => $order->id() . '-' . REQUEST_TIME,
       // Define a single item in the cart representing the whole order.
-      'item_name_1' => t('Order @order_number at @store', ['@order_number' => $order->getOrderNumber(), '@store' => $order->getStore()->label()]),
-      'amount_1' => \Drupal::getContainer()->get('commerce_price.rounder')->round($order->getTotalPrice())->getNumber(),
+      'item_name_1' => t('Order @order_number at @store', [
+        '@order_number' => $order->getOrderNumber(),
+        '@store' => $order->getStore()->label()
+      ]),
+      'amount_1' => \Drupal::getContainer()
+        ->get('commerce_price.rounder')
+        ->round($order->getTotalPrice())
+        ->getNumber(),
       'on0_1' => t('Product count'),
       'os0_1' => $order->get('order_items')->count(),
     ];
@@ -67,7 +68,15 @@ class PaymentsStandardPaymentForm extends OffsitePaymentForm {
       }
     }
 
-    return parent::buildConfigurationForm($form, $form_state);
+    $mode = $payment_gateway_plugin->getMode();
+    if ($mode == 'live') {
+      $redirect_url = 'https://www.paypal.com/cgi-bin/webscr';
+    }
+    else {
+      $redirect_url = 'https://www.sandbox.paypal.com/cgi-bin/webscr';
+    }
+
+    return $this->buildRedirectForm($form, $form_state, $redirect_url, $data, 'post');
   }
 
 }
