@@ -3,7 +3,6 @@
 namespace Drupal\commerce_paypal\PluginForm;
 
 use Drupal\commerce_payment\PluginForm\PaymentOffsiteForm;
-use Drupal\Core\Config\Config;
 use Drupal\Core\Form\FormStateInterface;
 
 class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
@@ -23,7 +22,7 @@ class PaymentsStandardPaymentForm extends PaymentOffsiteForm {
       // Signify we're passing in a shopping cart from our system.
       'upload' => 1,
       // The store's PayPal e-mail address.
-      'business' => \Drupal::config('commerce_payment.commerce_payment_gateway.plugin.paypal_payments_standard')->get('business'),
+      'business' => $payment_gateway_plugin->getConfiguration()['business'],
       // The path PayPal should send the IPN to.
       'notify_url' => $payment_gateway_plugin->getNotifyUrl()->toString(),
       // The application generating the API request.
